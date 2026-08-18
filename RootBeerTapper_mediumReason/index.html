@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Root Beer Rush</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1410; font-family: "Segoe UI", Arial, sans-serif; }
+  #hud { position: fixed; top: 12px; left: 14px; color: #ffe8c8; font-size: 22px; text-shadow: 0 2px 4px rgba(0,0,0,.6); user-select: none; }
+  #hud .lives { color: #ff5a4e; letter-spacing: 3px; }
+  #help { position: fixed; bottom: 10px; left: 14px; color: #caa; font-size: 13px; opacity: .8; user-select: none; }
+  #gameover { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; background: rgba(0,0,0,.65); color: #fff; }
+  #gameover h1 { font-size: 56px; margin: 0 0 10px; }
+  #gameover p { font-size: 24px; margin: 0 0 24px; }
+  #restart { font-size: 20px; padding: 10px 28px; border: none; border-radius: 8px; background: #b5651d; color: #fff; cursor: pointer; }
+  #restart:hover { background: #d07a2a; }
+</style>
+</head>
+<body>
+<div id="hud">Score: <span id="score">0</span> &nbsp;&nbsp; Lives: <span id="lives" class="lives">&#9829; &#9829; &#9829;</span></div>
+<div id="help">W/S or Up/Down: switch bar &middot; A/D or Left/Right: move &middot; Space: pour</div>
+<div id="gameover">
+  <h1>Game Over</h1>
+  <p>Final Score: <span id="finalscore">0</span></p>
+  <button id="restart">Play Again (R)</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ---------- Scene ----------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x241a12);
+scene.fog = new THREE.Fog(0x241a12, 26, 50);
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 8, 8.5);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const sun = new THREE.DirectionalLight(0xfff2d8, 0.9);
+sun.position.set(6, 12, 8);
+scene.add(sun);
+
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 40), new THREE.MeshLambertMaterial({ color: 0x3a2c1e }));
+floor.rotation.x = -Math.PI / 2;
+floor.position.y = -0.8;
+scene.add(floor);
+
+// ---------- Constants ----------
+const X_MIN = -9, X_MAX = 9;      // playfield extent along each bar
+const BAR_TOP = 0.7;              // y of the bar surface
+const BAR_Z = [-2.6, 2.6];        // top and bottom bars
+const PLAYER_SPEED = 9;
+const MUG_SPEED = 11;
+const CATCH_RANGE = 1.0;
+
+// ---------- Bars ----------
+const barGeo = new THREE.BoxGeometry((X_MAX - X_MIN) + 2, BAR_TOP, 1.8);
+const barMat = new THREE.MeshLambertMaterial({ color: 0x8a5a2b });
+BAR_Z.forEach(z => {
+  const bar = new THREE.Mesh(barGeo, barMat);
+  bar.position.set(0, BAR_TOP / 2, z);
+  scene.add(bar);
+});
+
+// ---------- Actor factories (simple geometric shapes) ----------
+function makePlayer() {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 0.8, 12), new THREE.MeshLambertMaterial({ color: 0xd0342c }));
+  body.position.y = 0.4;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 10), new THREE.MeshLambertMaterial({ color: 0xf0c8a0 }));
+  head.position.y = 1.05;
+  const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.2, 12), new THREE.MeshLambertMaterial({ color: 0xffffff }));
+  hat.position.y = 1.3;
+  g.add(body, head, hat);
+  return g;
+}
+
+// Full mug: brown root beer topped with a chunky white foam head.
+// Empty mug: same glass, dull color, dark hole on top, no foam.
+function makeMug(full) {
+  const g = new THREE.Group();
+  const glass = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.3, 0.24, 0.55, 14),
+    new THREE.MeshLambertMaterial({ color: full ? 0x5a2c0e : 0x9a8a70 })
+  );
+  glass.position.y = 0.275;
+  g.add(glass);
+  if (full) {
+    const foam = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.2, 14), new THREE.MeshLambertMaterial({ color: 0xfff5e0 }));
+    foam.position.y = 0.63;
+    g.add(foam);
+  } else {
+    const hole = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.03, 14), new THREE.MeshLambertMaterial({ color: 0x1c1c1c }));
+    hole.position.y = 0.56;
+    g.add(hole);
+  }
+  return g;
+}
+
+function makeCustomer() {
+  const g = new THREE.Group();
+  const shirt = new THREE.Color().setHSL(Math.random(), 0.65, 0.5);
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, 0.95, 12), new THREE.MeshLambertMaterial({ color: shirt }));
+  body.position.y = 0.475;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 12, 10), new THREE.MeshLambertMaterial({ color: 0xf0c8a0 }));
+  head.position.y = 1.2;
+  g.add(body, head);
+  return g;
+}
+
+// ---------- Game state ----------
+const player = makePlayer();
+scene.add(player);
+
+let barIndex = 1;               // start on bottom bar
+let score = 0;
+let lives = 3;
+let gameOver = false;
+let mugs = [];                  // { mesh, full, bar, vx }
+let customers = [];             // { mesh, bar, vx, walkSpeed, state, timer }
+let spawnTimer = 2;
+
+const scoreEl = document.getElementById('score');
+const livesEl = document.getElementById('lives');
+const overEl = document.getElementById('gameover');
+const finalEl = document.getElementById('finalscore');
+
+function updateHud() {
+  scoreEl.textContent = score;
+  livesEl.innerHTML = Array.from({ length: lives }, () => '&#9829;').join(' ');
+}
+
+function removeObject(mesh) {
+  scene.remove(mesh);
+}
+
+function loseLife() {
+  lives--;
+  updateHud();
+  if (lives <= 0) endGame();
+}
+
+function endGame() {
+  gameOver = true;
+  finalEl.textContent = score;
+  overEl.style.display = 'flex';
+}
+
+function resetGame() {
+  mugs.forEach(m => removeObject(m.mesh));
+  customers.forEach(c => removeObject(c.mesh));
+  mugs = [];
+  customers = [];
+  score = 0;
+  lives = 3;
+  barIndex = 1;
+  player.position.set(0, BAR_TOP, BAR_Z[1]);
+  spawnTimer = 2;
+  gameOver = false;
+  overEl.style.display = 'none';
+  updateHud();
+}
+
+document.getElementById('restart').addEventListener('click', resetGame);
+
+// ---------- Input ----------
+const keys = {};
+let switchRequested = -1;       // -1 none, 0 up, 1 down
+
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
+  keys[k] = true;
+  if (gameOver) {
+    if (k === 'r') resetGame();
+    return;
+  }
+  if (e.repeat) return;
+  if (k === ' ' || k === 'spacebar') pourMug();
+  if (k === 'w' || k === 'arrowup') switchRequested = 0;
+  if (k === 's' || k === 'arrowdown') switchRequested = 1;
+});
+addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+function pourMug() {
+  const mesh = makeMug(true);
+  mesh.position.set(player.position.x + 0.8, BAR_TOP, BAR_Z[barIndex]);
+  scene.add(mesh);
+  mugs.push({ mesh, full: true, bar: barIndex, vx: MUG_SPEED });
+}
+
+function spawnCustomer() {
+  const bar = Math.floor(Math.random() * 2);
+  const walkSpeed = 1.2 + Math.random() * 1.8;
+  const mesh = makeCustomer();
+  mesh.position.set(X_MAX + 1, BAR_TOP, BAR_Z[bar]);
+  scene.add(mesh);
+  customers.push({ mesh, bar, vx: -walkSpeed, walkSpeed, state: 'walking', timer: 0 });
+}
+
+// ---------- Update ----------
+function update(dt) {
+  // Player: move along bar, switch bars
+  const dir = (keys['a'] || keys['arrowleft'] ? -1 : 0) + (keys['d'] || keys['arrowright'] ? 1 : 0);
+  player.position.x += dir * PLAYER_SPEED * dt;
+  player.position.x = Math.max(X_MIN + 0.4, Math.min(X_MAX - 0.4, player.position.x));
+
+  if (switchRequested >= 0 && switchRequested !== barIndex) {
+    barIndex = switchRequested;
+  }
+  switchRequested = -1;
+  // Slide between bars quickly rather than teleporting
+  const targetZ = BAR_Z[barIndex];
+  player.position.z += (targetZ - player.position.z) * Math.min(1, dt * 14);
+
+  // Spawn customers at a steady, slightly random pace
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) {
+    spawnCustomer();
+    spawnTimer = 1.8 + Math.random() * 2.2;
+  }
+
+  // Customers
+  for (let i = customers.length - 1; i >= 0; i--) {
+    const c = customers[i];
+    if (c.state === 'walking') {
+      c.vx = -c.walkSpeed;
+    } else if (c.state === 'pushed') {
+      c.vx += (0 - c.vx) * Math.min(1, dt * 2.2);   // friction slows the shove
+      if (c.vx < 1.2) {                               // slowed down enough to drink
+        c.state = 'drinking';
+        c.timer = 0.7;
+        c.vx = 0;
+        // They finish the beer and toss an empty mug back left
+        const mesh = makeMug(false);
+        mesh.position.set(c.mesh.position.x - 0.6, BAR_TOP, BAR_Z[c.bar]);
+        scene.add(mesh);
+        mugs.push({ mesh, full: false, bar: c.bar, vx: -MUG_SPEED });
+      }
+    } else if (c.state === 'drinking') {
+      c.timer -= dt;
+      if (c.timer <= 0) c.state = 'leaving';
+    } else if (c.state === 'leaving') {
+      c.vx = 4;
+    }
+
+    c.mesh.position.x += c.vx * dt;
+    c.mesh.position.y = BAR_TOP + Math.abs(Math.sin(c.mesh.position.x * 6)) * 0.06; // subtle waddle
+
+    if (c.mesh.position.x > X_MAX + 1.5) {
+      if (c.state === 'pushed') score += 100;         // shoved out: points
+      removeObject(c.mesh);
+      customers.splice(i, 1);
+      updateHud();
+    } else if (c.state === 'walking' && c.mesh.position.x < X_MIN - 0.5) {
+      removeObject(c.mesh);
+      customers.splice(i, 1);
+      loseLife();                                      // got away thirsty
+    }
+  }
+
+  // Mugs
+  for (let i = mugs.length - 1; i >= 0; i--) {
+    const m = mugs[i];
+    m.mesh.position.x += m.vx * dt;
+
+    if (m.full) {
+      // Full mug vs. customers on the same bar
+      for (const c of customers) {
+        if (c.bar !== m.bar || (c.state !== 'walking' && c.state !== 'pushed')) continue;
+        if (Math.abs(c.mesh.position.x - m.mesh.position.x) < 0.8) {
+          c.state = 'pushed';
+          c.vx = 9;                                    // shove right
+          removeObject(m.mesh);
+          mugs.splice(i, 1);
+          break;
+        }
+      }
+      if (!mugs[i]) continue;                          // was consumed by a hit
+      if (m.mesh.position.x > X_MAX + 0.5) {           // no customer: beer is wasted
+        removeObject(m.mesh);
+        mugs.splice(i, 1);
+        loseLife();
+      }
+    } else {
+      // Empty mug: catch it or lose a life
+      if (barIndex === m.bar && Math.abs(player.position.x - m.mesh.position.x) < CATCH_RANGE) {
+        removeObject(m.mesh);
+        mugs.splice(i, 1);
+      } else if (m.mesh.position.x < X_MIN - 0.5) {
+        removeObject(m.mesh);
+        mugs.splice(i, 1);
+        loseLife();
+      }
+    }
+  }
+
+  if (gameOver) return;
+
+  // Face the player toward movement
+  player.rotation.y = dir > 0 ? 0 : dir < 0 ? Math.PI : player.rotation.y;
+}
+
+// ---------- Main loop ----------
+let last = performance.now();
+function loop(now) {
+  requestAnimationFrame(loop);
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (!gameOver) update(dt);
+  renderer.render(scene, camera);
+}
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+resetGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

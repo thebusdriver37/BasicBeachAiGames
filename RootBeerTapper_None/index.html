@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Root Beer Tapper</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #140b06;
+      font-family: "Courier New", monospace;
+    }
+    #hud {
+      position: fixed;
+      top: 12px;
+      left: 16px;
+      color: #ffe8c8;
+      font-size: 20px;
+      letter-spacing: 1px;
+      user-select: none;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+    }
+    #lives { color: #7fd4ff; }
+    #overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(10, 5, 2, 0.85);
+      color: #ffe8c8;
+      text-align: center;
+      user-select: none;
+    }
+    #overlay.hidden { display: none; }
+    #overlay h1 {
+      font-size: 44px;
+      margin: 0 0 12px;
+      color: #ffb347;
+      text-shadow: 0 3px 8px rgba(0, 0, 0, 0.9);
+    }
+    #overlay p { font-size: 18px; line-height: 1.6; margin: 6px 0; }
+    #finalScore { font-size: 26px; color: #fff; margin: 8px 0 20px; }
+    #overlay button {
+      font-family: inherit;
+      font-size: 20px;
+      padding: 10px 28px;
+      background: #ffb347;
+      color: #2a1505;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      letter-spacing: 1px;
+    }
+    #overlay button:hover { background: #ffc873; }
+    #hint {
+      position: fixed;
+      bottom: 10px;
+      left: 16px;
+      color: rgba(255, 232, 200, 0.6);
+      font-size: 13px;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <div>SCORE <span id="score">0</span></div>
+    <div>LIVES <span id="lives">&#9679;&#9679;&#9679;</span></div>
+  </div>
+  <div id="hint">W/S switch bar &nbsp;&nbsp; A/D move &nbsp;&nbsp; SPACE pour + slide mug right</div>
+  <div id="overlay">
+    <h1>ROOT BEER TAPPER</h1>
+    <p>Customers walk in from the right. Hit them with a full mug to send them off the bar.</p>
+    <p>Catch every empty mug before it hits the left edge. Don't let mugs or customers fall off.</p>
+    <p>W/S switch bars &nbsp; A/D move &nbsp; SPACE pour</p>
+    <div id="finalScore"></div>
+    <button id="startBtn">START</button>
+  </div>
+
+  <script>
+  (function () {
+    "use strict";
+
+    // ----- World constants -----------------------------------------------------
+    const BAR_X = 10;          // half-width of each bar
+    const BAR_Y_TOP = 2.2;
+    const BAR_Y_BOTTOM = -2.2;
+    const BAR_THICK = 0.5;
+    const BARTENDER_SPEED = 14;      // units per second
+    const MUG_SPEED = 13;            // sliding speed of a poured mug
+    const EMPTY_MUG_SPEED = 16;      // sliding speed of a returned empty mug
+    const CUSTOMER_BASE_SPEED = 2.4; // base walk speed, scaled per customer
+    const HIT_PUSH_SPEED = 7;        // speed a knocked customer slides right
+    const SPAWN_INTERVAL_START = 2.2; // seconds between spawns, decreases over time
+    const SPAWN_INTERVAL_MIN = 0.9;
+    const MUG_RADIUS = 0.42;
+    const BART_RADIUS = 0.55;
+    const CUST_RADIUS = 0.55;
+
+    const BAR_COLORS = [0x8b4513, 0x6b3410]; // top bar, bottom bar
+    const MUG_FULL_COLOR = 0x8b2be2; // root beer body (purple-brown, obvious)
+    const MUG_EMPTY_COLOR = 0x9a9a9a;
+    const MUG_FOAM_COLOR = 0xfff8e7;
+    const CUSTOMER_COLORS = [0xff5555, 0x55aaff, 0x55dd77, 0xffcc44, 0xff88dd, 0x66eeff];
+
+    // ----- Three.js scene -------------------------------------------------------
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x140b06);
+    scene.fog = new THREE.Fog(0x140b06, 25, 45);
+
+    const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 0, 16);
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    document.body.appendChild(renderer.domElement);
+
+    // Lighting: one ambient + two directionals for simple depth.
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 0.7);
+    keyLight.position.set(5, 10, 8);
+    scene.add(keyLight);
+    const fillLight = new THREE.DirectionalLight(0xffccaa, 0.3);
+    fillLight.position.set(-6, -4, 6);
+    scene.add(fillLight);
+
+    // ----- Geometry helpers -----------------------------------------------------
+    // A mug is a group: cylindrical body (beer) + foam disc on top.
+    function makeMug(full) {
+      const group = new THREE.Group();
+      const bodyColor = full ? MUG_FULL_COLOR : MUG_EMPTY_COLOR;
+      const body = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.32, 0.28, 0.6, 20),
+        new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.4 })
+      );
+      group.add(body);
+      // Foam head only on full mugs makes them easy to read at a glance.
+      if (full) {
+        const foam = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.34, 0.34, 0.12, 20),
+          new THREE.MeshStandardMaterial({ color: MUG_FOAM_COLOR, roughness: 0.9 })
+        );
+        foam.position.y = 0.34;
+        group.add(foam);
+      }
+      // Handle: small torus on the side.
+      const handle = new THREE.Mesh(
+        new THREE.TorusGeometry(0.18, 0.05, 8, 14, Math.PI),
+        new THREE.MeshStandardMaterial({ color: 0xd2a679, roughness: 0.5 })
+      );
+      handle.rotation.y = Math.PI / 2;
+      handle.position.x = 0.34;
+      group.add(handle);
+      return group;
+    }
+
+    // The bartender: a simple capsule-ish figure (cylinder body + sphere head).
+    function makeBartender() {
+      const group = new THREE.Group();
+      const body = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.3, 0.42, 0.9, 16),
+        new THREE.MeshStandardMaterial({ color: 0x2f6fd0, roughness: 0.5 })
+      );
+      group.add(body);
+      const head = new THREE.Mesh(
+        new THREE.SphereGeometry(0.28, 16, 16),
+        new THREE.MeshStandardMaterial({ color: 0xf2c79a, roughness: 0.6 })
+      );
+      head.position.y = 0.68;
+      group.add(head);
+      // A little cap so the head reads as a character.
+      const cap = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.3, 0.3, 0.1, 16),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 })
+      );
+      cap.position.y = 0.9;
+      group.add(cap);
+      return group;
+    }
+
+    // A customer: body + head, colored randomly from a palette.
+    function makeCustomer() {
+      const color = CUSTOMER_COLORS[Math.floor(Math.random() * CUSTOMER_COLORS.length)];
+      const group = new THREE.Group();
+      const body = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.28, 0.4, 0.85, 16),
+        new THREE.MeshStandardMaterial({ color: color, roughness: 0.55 })
+      );
+      group.add(body);
+      const head = new THREE.Mesh(
+        new THREE.SphereGeometry(0.26, 16, 16),
+        new THREE.MeshStandardMaterial({ color: 0xf2c79a, roughness: 0.6 })
+      );
+      head.position.y = 0.62;
+      group.add(head);
+      return group;
+    }
+
+    function addBar(y, color) {
+      const bar = new THREE.Mesh(
+        new THREE.BoxGeometry(BAR_X * 2, BAR_THICK, 1.4),
+        new THREE.MeshStandardMaterial({ color: color, roughness: 0.6 })
+      );
+      bar.position.set(0, y, 0);
+      scene.add(bar);
+      // Front edge strip for a bit of depth.
+      const edge = new THREE.Mesh(
+        new THREE.BoxGeometry(BAR_X * 2, 0.08, 1.46),
+        new THREE.MeshStandardMaterial({ color: 0xd2a679, roughness: 0.5 })
+      );
+      edge.position.set(0, y - BAR_THICK / 2 - 0.04, 0);
+      scene.add(edge);
+    }
+    addBar(BAR_Y_TOP, BAR_COLORS[0]);
+    addBar(BAR_Y_BOTTOM, BAR_COLORS[1]);
+
+    // ----- Game state ------------------------------------------------------------
+    const BAR_HEIGHTS = [BAR_Y_TOP, BAR_Y_BOTTOM];
+    const barY = (barIndex) => BAR_HEIGHTS[barIndex] + BAR_THICK / 2; // resting surface
+
+    const state = {
+      running: false,
+      score: 0,
+      lives: 3,
+      barIndex: 0, // which bar the bartender is on
+      bartenderX: -BAR_X + 1,
+      mugs: [],     // { group, barIndex, x, full, speed, hitCustomer }
+      customers: [], // { group, barIndex, x, speed, knocked }
+      spawnTimer: 0,
+      elapsed: 0,
+    };
+
+    const bartender = makeBartender();
+    scene.add(bartender);
+
+    // ----- HUD ------------------------------------------------------------------
+    const scoreEl = document.getElementById("score");
+    const livesEl = document.getElementById("lives");
+    const overlay = document.getElementById("overlay");
+    const finalScoreEl = document.getElementById("finalScore");
+    const startBtn = document.getElementById("startBtn");
+
+    function updateHud() {
+      scoreEl.textContent = state.score;
+      livesEl.innerHTML = "&#9679;".repeat(state.lives) + "&#9675;".repeat(Math.max(0, 3 - state.lives));
+    }
+
+    // ----- Input ----------------------------------------------------------------
+    const keys = {};
+    window.addEventListener("keydown", (e) => {
+      const k = e.key.toLowerCase();
+      if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d", " "].includes(k)) {
+        e.preventDefault();
+      }
+      keys[k] = true;
+      if (k === " ") tryPour(); // pour on keydown, not while held
+    });
+    window.addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
+
+    startBtn.addEventListener("click", startGame);
+
+    function startGame() {
+      // Clear any leftover entities from a previous run.
+      for (const m of state.mugs) scene.remove(m.group);
+      for (const c of state.customers) scene.remove(c.group);
+      state.mugs = [];
+      state.customers = [];
+      state.score = 0;
+      state.lives = 3;
+      state.barIndex = 0;
+      state.bartenderX = -BAR_X + 1;
+      state.spawnTimer = SPAWN_INTERVAL_START;
+      state.elapsed = 0;
+      state.running = true;
+      overlay.classList.add("hidden");
+      updateHud();
+    }
+
+    function endGame() {
+      state.running = false;
+      finalScoreEl.textContent = "FINAL SCORE: " + state.score;
+      overlay.classList.remove("hidden");
+      startBtn.textContent = "RESTART";
+    }
+
+    // ----- Spawning ----------------------------------------------------------------
+    function spawnCustomer() {
+      const barIndex = Math.random() < 0.5 ? 0 : 1;
+      const group = makeCustomer();
+      const x = BAR_X + 0.8; // just off the right edge
+      group.position.set(x, barY(barIndex) + 0.6, 0);
+      scene.add(group);
+      const speed = CUSTOMER_BASE_SPEED * (0.7 + Math.random() * 0.9);
+      state.customers.push({ group, barIndex, x, speed, knocked: false });
+    }
+
+    // ----- Pouring ------------------------------------------------------------------
+    function tryPour() {
+      if (!state.running) return;
+      // One active full mug per bar keeps things fair and readable.
+      const hasMug = state.mugs.some((m) => m.full && m.barIndex === state.barIndex);
+      if (hasMug) return;
+      const group = makeMug(true);
+      const x = state.bartenderX + 0.8;
+      group.position.set(x, barY(state.barIndex) + 0.35, 0);
+      scene.add(group);
+      state.mugs.push({ group, barIndex: state.barIndex, x, full: true, speed: MUG_SPEED, hitCustomer: null });
+    }
+
+    // ----- Losing a life ---------------------------------------------------------------
+    function loseLife() {
+      state.lives -= 1;
+      updateHud();
+      if (state.lives <= 0) endGame();
+    }
+
+    // ----- Removing entities ----------------------------------------------------------
+    function removeMug(index) {
+      scene.remove(state.mugs[index].group);
+      state.mugs.splice(index, 1);
+    }
+
+    function removeCustomer(index) {
+      scene.remove(state.customers[index].group);
+      state.customers.splice(index, 1);
+    }
+
+    // ----- Update loop ---------------------------------------------------------------
+    let lastTime = performance.now();
+
+    function update(dt) {
+      state.elapsed += dt;
+
+      // --- Bartender movement ---
+      const left = keys["arrowleft"] || keys["a"];
+      const right = keys["arrowright"] || keys["d"];
+      const up = keys["arrowup"] || keys["w"];
+      const down = keys["arrowdown"] || keys["s"];
+      if (left) state.bartenderX -= BARTENDER_SPEED * dt;
+      if (right) state.bartenderX += BARTENDER_SPEED * dt;
+      state.bartenderX = Math.max(-BAR_X + BART_RADIUS, Math.min(BAR_X - BART_RADIUS, state.bartenderX));
+      if (up && state.barIndex !== 0) state.barIndex = 0;
+      if (down && state.barIndex !== 1) state.barIndex = 1;
+      bartender.position.set(state.bartenderX, barY(state.barIndex) + 0.55, 0);
+
+      // --- Customer spawning ---
+      state.spawnTimer -= dt;
+      if (state.spawnTimer <= 0) {
+        spawnCustomer();
+        const interval = Math.max(SPAWN_INTERVAL_MIN, SPAWN_INTERVAL_START - state.elapsed * 0.01);
+        state.spawnTimer = interval;
+      }
+
+      // --- Full mugs: slide right, hit customers ---
+      for (let i = state.mugs.length - 1; i >= 0; i--) {
+        const mug = state.mugs[i];
+        if (!mug.full) continue;
+        mug.x += mug.speed * dt;
+        mug.group.position.x = mug.x;
+
+        // Off the right edge with no customer hit: lost mug.
+        if (mug.x > BAR_X + 1.2) {
+          removeMug(i);
+          loseLife();
+          continue;
+        }
+
+        // Collision with a customer on the same bar.
+        for (let j = state.customers.length - 1; j >= 0; j--) {
+          const cust = state.customers[j];
+          if (cust.barIndex !== mug.barIndex || cust.knocked) continue;
+          if (Math.abs(cust.x - mug.x) < MUG_RADIUS + CUST_RADIUS) {
+            // Hit: push the customer right, mug is consumed.
+            cust.knocked = true;
+            cust.speed = HIT_PUSH_SPEED;
+            removeMug(i);
+            break;
+          }
+        }
+      }
+
+      // --- Customers: walk left, or slide right when knocked ---
+      for (let j = state.customers.length - 1; j >= 0; j--) {
+        const cust = state.customers[j];
+        if (cust.knocked) {
+          cust.x += cust.speed * dt;
+          if (cust.x > BAR_X + 1.2) {
+            // Pushed off the right edge: score points.
+            state.score += 100;
+            updateHud();
+            removeCustomer(j);
+            continue;
+          }
+          // Slid to a stop without escaping: they drink and return the mug.
+          if (cust.x >= BAR_X - 1.0) {
+            cust.knocked = false;
+            cust.x = BAR_X - 1.0;
+            drinkAndReturnMug(cust, j);
+          }
+        } else {
+          cust.x -= cust.speed * dt;
+          if (cust.x < -BAR_X - 0.6) {
+            // Reached the left end: lose a life.
+            removeCustomer(j);
+            loseLife();
+            continue;
+          }
+          // Drink when they reach a comfortable spot near the left.
+          if (cust.x < -BAR_X + 2.5) {
+            drinkAndReturnMug(cust, j);
+          }
+        }
+        cust.group.position.x = cust.x;
+      }
+
+      // --- Empty mugs: slide left, bartender must catch ---
+      for (let i = state.mugs.length - 1; i >= 0; i--) {
+        const mug = state.mugs[i];
+        if (mug.full) continue;
+        mug.x -= mug.speed * dt;
+        mug.group.position.x = mug.x;
+
+        // Caught by the bartender on the same bar.
+        if (mug.barIndex === state.barIndex && Math.abs(mug.x - state.bartenderX) < MUG_RADIUS + BART_RADIUS) {
+          removeMug(i);
+          continue;
+        }
+        // Slid off the left edge: lose a life.
+        if (mug.x < -BAR_X - 1.2) {
+          removeMug(i);
+          loseLife();
+        }
+      }
+    }
+
+    // A customer drinks and sends an empty mug sliding back left.
+    function drinkAndReturnMug(cust, custIndex) {
+      const barIndex = cust.barIndex;
+      const x = cust.x - 0.8;
+      const group = makeMug(false);
+      group.position.set(x, barY(barIndex) + 0.35, 0);
+      scene.add(group);
+      state.mugs.push({ group, barIndex, x, full: false, speed: EMPTY_MUG_SPEED, hitCustomer: null });
+      // Remove the customer; the empty mug is the thing to deal with now.
+      removeCustomer(custIndex);
+    }
+
+    function animate(now) {
+      requestAnimationFrame(animate);
+      const dt = Math.min((now - lastTime) / 1000, 0.05); // clamp to avoid big jumps
+      lastTime = now;
+      if (state.running) update(dt);
+      renderer.render(scene, camera);
+    }
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    updateHud();
+    requestAnimationFrame(animate);
+  })();
+  </script>
+</body>
+</html>
