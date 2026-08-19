@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>CHICKEN CANNON: Office Chair Armageddon</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #1a1f2e;
+    font-family: "Arial Black", "Segoe UI Black", Impact, sans-serif;
+    -webkit-user-select: none; user-select: none;
+    touch-action: none;
+  }
+  #wrap {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #stage {
+    position: relative;
+    box-shadow: 0 0 0 6px #0d1017, 0 25px 80px rgba(0,0,0,.7);
+  }
+  canvas { display: block; }
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center;
+    background: rgba(10, 14, 24, .82);
+    color: #fff;
+    z-index: 10;
+  }
+  .overlay.hidden { display: none; }
+  .title {
+    font-size: 52px;
+    line-height: 1.05;
+    letter-spacing: 2px;
+    color: #ffd23f;
+    text-shadow: 4px 4px 0 #d33, 8px 8px 0 rgba(0,0,0,.45);
+    transform: rotate(-2deg);
+    margin-bottom: 10px;
+  }
+  .title small {
+    display: block;
+    font-size: 20px;
+    color: #7ee7ff;
+    text-shadow: 2px 2px 0 rgba(0,0,0,.5);
+    letter-spacing: 4px;
+    margin-top: 8px;
+  }
+  .sub {
+    font-size: 17px;
+    color: #cfd8ff;
+    margin: 14px 0 22px;
+    max-width: 560px;
+    line-height: 1.5;
+    font-family: Arial, sans-serif;
+    font-weight: bold;
+  }
+  .sub b { color: #ffd23f; }
+  .btn {
+    font-family: inherit;
+    font-size: 26px;
+    letter-spacing: 2px;
+    color: #1a1f2e;
+    background: #ffd23f;
+    border: 4px solid #1a1f2e;
+    box-shadow: 0 7px 0 #b58a00;
+    padding: 14px 44px;
+    border-radius: 14px;
+    cursor: pointer;
+    transform: rotate(1deg);
+    transition: transform .08s, box-shadow .08s;
+  }
+  .btn:hover { transform: rotate(1deg) translateY(-2px) scale(1.03); }
+  .btn:active { transform: rotate(1deg) translateY(3px); box-shadow: 0 2px 0 #b58a00; }
+  .endrank {
+    font-size: 30px;
+    color: #7ee7ff;
+    text-shadow: 2px 2px 0 rgba(0,0,0,.5);
+    margin: 6px 0 4px;
+  }
+  .endscore {
+    font-size: 60px;
+    color: #ffd23f;
+    text-shadow: 4px 4px 0 #d33;
+    margin: 4px 0 18px;
+  }
+  .shame {
+    margin-bottom: 24px;
+    min-width: 300px;
+  }
+  .shame h3 {
+    font-size: 16px;
+    color: #ff8fa3;
+    letter-spacing: 3px;
+    margin-bottom: 8px;
+  }
+  .shame ol {
+    list-style: none;
+    font-family: Arial, sans-serif;
+    font-weight: bold;
+    font-size: 15px;
+    color: #cfd8ff;
+  }
+  .shame li { padding: 2px 0; }
+  .shame li.me { color: #ffd23f; }
+  .hint {
+    position: absolute;
+    bottom: 10px; left: 0; right: 0;
+    text-align: center;
+    font-family: Arial, sans-serif;
+    font-weight: bold;
+    font-size: 13px;
+    color: rgba(255,255,255,.45);
+    letter-spacing: 1px;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="game"></canvas>
+
+    <div id="startScreen" class="overlay">
+      <div class="title">CHICKEN CANNON<small>OFFICE CHAIR ARMAGEDDON</small></div>
+      <div class="sub">
+        The quarterly budget meeting ended. The chairs have declared independence.<br>
+        Load your <b>rubber chickens</b> and launch them at the stack of traitorous office chairs.<br><br>
+        <b>DRAG & RELEASE</b> - slingshot style. Pull back, let go, chicken flies the other way.<br>
+        Combo chairs for big points. Knock them off the building. Bonk the intern (he knows).<br><br>
+        PSST. Something is coming from the sky. Do not ask what it is.
+      </div>
+      <button class="btn" id="startBtn">PUNCH IN &raquo;</button>
+      <div class="hint">sound on for maximum stupidity</div>
+    </div>
+
+    <div id="endScreen" class="overlay hidden">
+      <div class="title" id="endTitle">FED UP</div>
+      <div class="endrank" id="endRank"></div>
+      <div class="endscore" id="endScore">0</div>
+      <div class="shame">
+        <h3>WALL OF SHAME</h3>
+        <ol id="shameList"></ol>
+      </div>
+      <button class="btn" id="againBtn">WORK OVERTIME &raquo;</button>
+    </div>
+  </div>
+</div>
+<script src="vendor/matter.min.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
