@@ -13,9 +13,12 @@ var W = 1280, H = 720, GROUND_Y = 640;
 var LAUNCHER = { x: 150, y: GROUND_Y - 55 };
 
 var canvas = document.getElementById("game");
-var ctx = canvas.getContext("2d");
+var displayCtx = canvas.getContext("2d", { alpha: false });
+var frameCanvas = document.createElement("canvas");
+var ctx = frameCanvas.getContext("2d", { alpha: false });
 var dpr = Math.min(window.devicePixelRatio || 1, 2);
 canvas.width = W * dpr; canvas.height = H * dpr;
+frameCanvas.width = canvas.width; frameCanvas.height = canvas.height;
 ctx.scale(dpr, dpr);
 
 function fitStage() {
@@ -1128,11 +1131,20 @@ function stepEffects() {
 }
 
 function render() {
+  // Establish a known drawing state and replace every pixel from the prior frame.
+  // The explicit copy operation prevents translucent effects from accumulating.
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "copy";
+  ctx.fillStyle = "#2b3350";
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalCompositeOperation = "source-over";
+  drawBackground();
+
   ctx.save();
   if (shake > 0) {
     ctx.translate(rnd(-shake, shake) * 0.5, rnd(-shake, shake) * 0.5);
   }
-  drawBackground();
 
   // aim preview under bodies
   drawAim();
@@ -1204,6 +1216,13 @@ function render() {
   drawHUD();
   drawBanner();
   ctx.restore();
+
+  // Replace the visible image with the finished frame instead of blending over it.
+  displayCtx.setTransform(1, 0, 0, 1, 0, 0);
+  displayCtx.globalAlpha = 1;
+  displayCtx.globalCompositeOperation = "copy";
+  displayCtx.drawImage(frameCanvas, 0, 0);
+  displayCtx.globalCompositeOperation = "source-over";
 }
 
 /* ---------------- BOOT ---------------- */
